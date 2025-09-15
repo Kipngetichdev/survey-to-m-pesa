@@ -1,20 +1,54 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { toast } from 'react-toastify';
+import { auth, db } from '../services/firebase';
 import appImg from '../assets/appImg.jpg';
 
 const SignUp = () => {
   const [formData, setFormData] = useState({ name: '', email: '', password: '', phone: '' });
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    setError('');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!formData.name || !formData.email || !formData.password || !formData.phone) {
-      alert('Please fill in all required fields.');
+      setError('Please fill in all required fields.');
+      toast.error('Please fill in all required fields.');
       return;
     }
-    alert('Sign-up successful! (Simulated)');
+    if (!/^0[17]\d{8}$/.test(formData.phone)) {
+      setError('Please enter a valid phone number (e.g., 0712345678 or 0101234567).');
+      toast.error('Please enter a valid phone number (e.g., 0712345678 or 0101234567).');
+      return;
+    }
+    if (formData.password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      toast.error('Password must be at least 6 characters long.');
+      return;
+    }
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+      const user = userCredential.user;
+      await setDoc(doc(db, 'users', user.uid), {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        createdAt: new Date(),
+      });
+      toast.success('Sign-up successful! Welcome to Survey Pesa!');
+      navigate('/surveys');
+    } catch (error) {
+      const errorMessage = error.message || 'Sign-up failed. Please try again.';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    }
   };
 
   return (
@@ -34,6 +68,7 @@ const SignUp = () => {
           </p>
           <div className="max-w-md mx-auto bg-primary-contrast rounded-lg shadow-md p-6 sm:p-8">
             <div className="space-y-4">
+              {error && <p className="text-red-500 text-base">{error}</p>}
               <input
                 type="text"
                 name="name"
@@ -57,11 +92,11 @@ const SignUp = () => {
               <input
                 type="tel"
                 name="phone"
-                placeholder="M-Pesa Phone Number (e.g., +2547XXXXXXXX)"
+                placeholder="Phone Number (e.g., 0712345678)"
                 value={formData.phone}
                 onChange={handleChange}
                 className="w-full p-4 border border-secondary-main rounded-lg text-secondary-contrast focus:outline-none focus:ring-2 focus:ring-accent-main transition-shadow duration-200"
-                aria-label="M-Pesa Phone Number"
+                aria-label="Phone Number"
                 required
               />
               <input
