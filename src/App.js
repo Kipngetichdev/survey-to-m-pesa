@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './App.css';
@@ -14,7 +14,11 @@ import Contact from './components/Contact';
 import Login from './components/Login';
 import SignUp from './components/SignUp';
 import Surveys from './pages/Surveys';
+import Insights from './pages/Insights';
+import Writer from './pages/Writer';
+import Wallet from './pages/Wallet';
 import Footer from './components/Footer';
+import BottomNav from './components/BottomNav';
 
 const Home = () => (
   <>
@@ -28,17 +32,28 @@ const Home = () => (
   </>
 );
 
-const App = () => (
-  <Router>
-    <div>
-      <Navbar />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<SignUp />} />
-        <Route path="/surveys" element={<Surveys />} />
-      </Routes>
-      <Footer />
+const App = () => {
+  const location = useLocation();
+  const dashboardRoutes = ['/surveys', '/insights', '/writer', '/wallet'];
+  const showBottomNav = dashboardRoutes.includes(location.pathname);
+  const showNavAndFooter = !showBottomNav;
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      {showNavAndFooter && <Navbar />}
+      <main className="flex-grow">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<SignUp />} />
+          <Route path="/surveys" element={<Surveys />} />
+          <Route path="/insights" element={<Insights />} />
+          <Route path="/writer" element={<Writer />} />
+          <Route path="/wallet" element={<Wallet />} />
+        </Routes>
+      </main>
+      {showNavAndFooter && <Footer />}
+      {showBottomNav && <BottomNav />}
       <ToastContainer
         position="top-right"
         autoClose={5000}
@@ -52,7 +67,13 @@ const App = () => (
         theme="colored"
       />
     </div>
+  );
+};
+
+const AppWrapper = () => (
+  <Router>
+    <App />
   </Router>
 );
 
-export default App;
+export default AppWrapper;
