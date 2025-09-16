@@ -9,6 +9,7 @@ import appImg from '../assets/appImg.jpg';
 const SignUp = () => {
   const [formData, setFormData] = useState({ name: '', email: '', password: '', phone: '' });
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -33,6 +34,7 @@ const SignUp = () => {
       return;
     }
 
+    setIsLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
@@ -48,6 +50,8 @@ const SignUp = () => {
       const errorMessage = error.message || 'Sign-up failed. Please try again.';
       setError(errorMessage);
       toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -111,10 +115,39 @@ const SignUp = () => {
               />
               <button
                 onClick={handleSubmit}
-                className="w-full bg-accent-main text-primary-contrast px-6 py-3 rounded-lg hover:bg-accent-light focus:ring-2 focus:ring-accent-main focus:outline-none shadow-md transition-all duration-200 transform hover:scale-105"
+                disabled={isLoading}
+                className={`w-full flex items-center justify-center px-6 py-3 rounded-lg focus:outline-none shadow-md transition-all duration-200 transform hover:scale-105 ${
+                  isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-accent-main text-primary-contrast hover:bg-accent-light focus:ring-2 focus:ring-accent-main'
+                }`}
                 aria-label="Sign Up"
               >
-                Sign Up
+                {isLoading ? (
+                  <>
+                    <svg
+                      className="animate-spin h-5 w-5 mr-2 text-primary-contrast"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                    Signing Up...
+                  </>
+                ) : (
+                  'Sign Up'
+                )}
               </button>
             </div>
             <p className="mt-6 text-base">
