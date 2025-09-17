@@ -17,6 +17,7 @@ import Surveys from './pages/Surveys';
 import Insights from './pages/Insights';
 import Writer from './pages/Writer';
 import Wallet from './pages/Wallet';
+import TaskingPage from './pages/TaskingPage';
 import Footer from './components/Footer';
 import BottomNav from './components/BottomNav';
 
@@ -34,8 +35,10 @@ const Home = () => (
 
 const App = () => {
   const location = useLocation();
-  const dashboardRoutes = ['/surveys', '/insights', '/writer', '/wallet'];
-  const showBottomNav = dashboardRoutes.includes(location.pathname);
+  const dashboardRoutes = ['/surveys', '/insights', '/writer', '/wallet', '/tasks/*'];
+  const showBottomNav = dashboardRoutes.some((route) =>
+    route.endsWith('*') ? location.pathname.startsWith(route.slice(0, -2)) : location.pathname === route
+  );
   const showNavAndFooter = !showBottomNav;
 
   return (
@@ -50,6 +53,7 @@ const App = () => {
           <Route path="/insights" element={<Insights />} />
           <Route path="/writer" element={<Writer />} />
           <Route path="/wallet" element={<Wallet />} />
+          <Route path="/tasks/:category" element={<TaskingPage />} />
         </Routes>
       </main>
       {showNavAndFooter && <Footer />}
