@@ -1,32 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { getDoc, doc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
-// Static categories to match Surveys.js
-const CATEGORIES = [
-  { id: 9, name: 'General Knowledge' },
-  { id: 10, name: 'Entertainment: Books' },
-  { id: 11, name: 'Entertainment: Film' },
-  { id: 12, name: 'Entertainment: Music' },
-  { id: 17, name: 'Science & Nature' },
-  { id: 21, name: 'Sports' },
-  { id: 23, name: 'History' },
-  { id: 22, name: 'Geography' },
-  { id: 25, name: 'Art' },
-];
+// Utility functions
+const decodeHtmlEntities = (str) => {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = str;
+  return textarea.value;
+};
 
-// Generate random duration for free tier (1.5–2 min)
+const shuffleArray = (array) => {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
 const getRandomDuration = () => {
   const range = [1.5, 2];
   return (Math.random() * (range[1] - range[0]) + range[0]).toFixed(1) + ' min';
 };
 
-// Generate unique rewards for free tier (KES 4–8)
 const generateUniqueRewards = (count) => {
   const rewards = new Set();
-  const min = 4,
-    max = 8;
+  const min = 4, max = 8;
   while (rewards.size < count) {
     const reward = (Math.random() * (max - min) + min).toFixed(2);
     rewards.add(reward);
@@ -34,7 +35,6 @@ const generateUniqueRewards = (count) => {
   return Array.from(rewards).map((reward) => `KES ${reward}`);
 };
 
-// Get or set fixed duration and rewards for free tier
 const getTierMetadata = (categories = []) => {
   const key = 'freeTierMetadata';
   const stored = localStorage.getItem(key);
@@ -52,85 +52,82 @@ const getTierMetadata = (categories = []) => {
   return metadata;
 };
 
-const TaskData = ({ renderTask, renderEmpty, category = 'General Knowledge', user }) => {
-  const [surveys, setSurveys] = useState([]);
-  const [categories, setCategories] = useState([]);
+// Custom hook for OpenTDB API calls with retry logic
+const useOpenTDBAPI = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
-  const [disabledCategories, setDisabledCategories] = useState({});
-  const [categoryCooldowns, setCategoryCooldowns] = useState({});
+  const [error, setError] = useState(null);
 
-  // Normalize category names by removing prefixes
-  const normalizeCategoryName = (name) => name.replace(/Entertainment: |Science: /g, '');
-
-  // Fetch categories from OpenTDB
-  const fetchCategories = async (retryCount = 0, maxRetries = 3) => {
-    console.log('Fetching categories...');
-    const cachedCategories = JSON.parse(localStorage.getItem('opentdb_categories'));
-    if (cachedCategories && cachedCategories.length > 0) {
-      console.log('Using cached categories:', cachedCategories.map((c) => c.name));
-      setCategories(cachedCategories);
-      setCategoriesLoaded(true);
-      return;
-    }
+  const apiCall = useCallback(async (endpoint, options = {}, retryCount = 0, maxRetries = 3) => {
+    setIsLoading(true);
+    setError(null);
 
     try {
-      const response = await fetch('https://opentdb.com/api_category.php');
+      const response = await fetch(`https://opentdb.com/${endpoint}`, options);
+      
       if (response.status === 429) {
         if (retryCount < maxRetries) {
-          const delay = Math.pow(2, retryCount) * 5000;
-          console.log(`Rate limit hit for categories, retrying after ${delay}ms (attempt ${retryCount + 1})`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          return fetchCategories(retryCount + 1, maxRetries);
+          const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+          console.log(`Rate limit hit, retrying after ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return apiCall(endpoint, options, retryCount + 1, maxRetries);
         } else {
-          throw new Error('Max retries reached for OpenTDB categories API');
+          throw new Error('Max retries reached due to rate limiting');
         }
       }
+
       if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
+
       const data = await response.json();
-      if (!data.trivia_categories || data.trivia_categories.length === 0) {
-        throw new Error('No categories returned from OpenTDB API');
+      
+      if (data.response_code && data.response_code !== 0) {
+        const errorMessages = {
+          1: 'No results found for this category',
+          2: 'Invalid parameter in API request',
+          3: 'Session not found',
+          4: 'Invalid token provided'
+        };
+        throw new Error(errorMessages[data.response_code] || `API error: ${data.response_code}`);
       }
-      const allCategories = data.trivia_categories.sort((a, b) => a.name.localeCompare(b.name));
-      const metadata = getTierMetadata(allCategories);
-      const processedCategories = allCategories.map((category) => ({
-        ...category,
-        name: normalizeCategoryName(category.name),
-        duration: metadata.duration,
-        reward: metadata.rewards[category.id] || `KES 4.00`,
-        tier: 'free',
-      }));
-      setCategories(processedCategories);
-      localStorage.setItem('opentdb_categories', JSON.stringify(processedCategories));
-      setCategoriesLoaded(true);
-      console.log('Categories fetched and cached:', processedCategories.map((c) => c.name));
-    } catch (error) {
-      toast.error('Failed to fetch categories. Using cached data or fallback.');
-      console.error('Error fetching OpenTDB categories:', error);
-      const cachedCategories = JSON.parse(localStorage.getItem('opentdb_categories'));
-      if (cachedCategories && cachedCategories.length > 0) {
-        setCategories(cachedCategories);
-        setCategoriesLoaded(true);
-      } else {
-        const staticCategories = CATEGORIES.map((cat) => ({
-          ...cat,
-          name: normalizeCategoryName(cat.name),
-          duration: getRandomDuration(),
-          reward: `KES ${((Math.random() * (8 - 4) + 4).toFixed(2))}`,
-          tier: 'free',
-        }));
-        setCategories(staticCategories);
-        setCategoriesLoaded(true);
-        console.log('Using static categories:', staticCategories.map((c) => c.name));
-      }
+
+      return data;
+    } catch (err) {
+      console.error(`OpenTDB API Error (${endpoint}):`, err);
+      setError(err.message);
+      throw err;
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, []);
+
+  return { apiCall, isLoading, error };
+};
+
+const TaskData = ({ renderTask, renderEmpty, category = 'General Knowledge', user }) => {
+  const location = useLocation();
+  const { categoryId: stateCategoryId, categoryName: stateCategoryName, displayName } = location.state || {};
+  
+  const [surveys, setSurveys] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [disabledCategories, setDisabledCategories] = useState({});
+  const [categoryCooldowns, setCategoryCooldowns] = useState({});
+  const [categories, setCategories] = useState([]);
+
+  // Use state data if available, otherwise use props
+  const effectiveCategory = stateCategoryName || category;
+  const effectiveCategoryId = stateCategoryId;
+  const effectiveDisplayName = displayName || effectiveCategory;
+
+  const { apiCall, isLoading: apiLoading, error: apiError } = useOpenTDBAPI();
+
+  // Normalize category names
+  const normalizeCategoryName = (name) => name.replace(/Entertainment: |Science: /g, '');
 
   // Fetch user history for cooldowns
   const fetchUserHistory = async () => {
     if (!user) return;
+    
     try {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
@@ -138,6 +135,7 @@ const TaskData = ({ renderTask, renderEmpty, category = 'General Knowledge', use
         const now = new Date();
         const disabled = {};
         const cooldowns = {};
+        
         history.forEach(({ categoryId, completedAt }) => {
           if (completedAt) {
             const completedTime = new Date(completedAt);
@@ -149,9 +147,10 @@ const TaskData = ({ renderTask, renderEmpty, category = 'General Knowledge', use
             }
           }
         });
+        
         setDisabledCategories(disabled);
         setCategoryCooldowns(cooldowns);
-        console.log('User history fetched:', { disabled, cooldowns });
+        console.log('User cooldowns loaded:', Object.keys(disabled).length, 'categories disabled');
       }
     } catch (error) {
       console.error('Error fetching user history:', error);
@@ -185,117 +184,255 @@ const TaskData = ({ renderTask, renderEmpty, category = 'General Knowledge', use
     return () => clearInterval(timer);
   }, [categoryCooldowns]);
 
-  // Fetch surveys from OpenTDB
-  const fetchSurveys = async (retryCount = 0, maxRetries = 3) => {
-    if (!categoriesLoaded) {
-      console.log('Waiting for categories to load');
-      return;
-    }
-
-    setIsLoading(true);
-    setSurveys([]); // Clear previous surveys
-    console.log(`Starting fetch for category: ${category}`);
-
-    const cachedCategories = JSON.parse(localStorage.getItem('opentdb_categories')) || categories;
-    const selectedCategory = cachedCategories.find((cat) => cat.name === normalizeCategoryName(category)) ||
-                            CATEGORIES.find((cat) => cat.name === normalizeCategoryName(category));
-    if (!selectedCategory) {
-      toast.error(`Category "${category}" not found.`);
-      console.error(`Category "${category}" not found in categories:`, cachedCategories.map((c) => c.name));
-      setIsLoading(false);
-      return;
-    }
-    const categoryId = selectedCategory.id;
-    const cacheKey = `opentdb_surveys_${categoryId}`;
-    console.log(`Fetching surveys for category: ${category} (ID: ${categoryId})`);
-
-    // Clear cache to force fresh fetch
-    localStorage.removeItem(cacheKey);
-
+  // Fetch categories (used for metadata generation)
+  const fetchCategories = useCallback(async () => {
     try {
-      const response = await fetch(
-        `https://opentdb.com/api.php?amount=10&type=multiple&category=${categoryId}`
-      );
-      if (response.status === 429) {
-        if (retryCount < maxRetries) {
-          const delay = Math.pow(2, retryCount) * 5000;
-          console.log(`Rate limit hit, retrying after ${delay}ms (attempt ${retryCount + 1})`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          return fetchSurveys(retryCount + 1, maxRetries);
-        } else {
-          throw new Error('Max retries reached for OpenTDB API');
+      const cachedCategories = localStorage.getItem('opentdb_categories');
+      if (cachedCategories) {
+        const parsed = JSON.parse(cachedCategories);
+        setCategories(parsed);
+        return parsed;
+      }
+
+      const data = await apiCall('api_category.php');
+      const allCategories = data.trivia_categories;
+      
+      // Cache and set categories
+      localStorage.setItem('opentdb_categories', JSON.stringify(allCategories));
+      setCategories(allCategories);
+      return allCategories;
+      
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      // Use minimal category data for metadata
+      setCategories([{ id: effectiveCategoryId, name: effectiveCategory }]);
+      return [{ id: effectiveCategoryId, name: effectiveCategory }];
+    }
+  }, [apiCall, effectiveCategoryId, effectiveCategory]);
+
+  // Main function to fetch quizzes from OpenTDB
+  const fetchQuizzesFromAPI = useCallback(async () => {
+    if (!effectiveCategoryId) {
+      throw new Error('No category ID provided');
+    }
+
+    console.log(`Fetching quizzes for category ${effectiveCategory} (ID: ${effectiveCategoryId})`);
+    
+    try {
+      // Generate metadata first
+      const allCategories = await fetchCategories();
+      const metadata = getTierMetadata(allCategories);
+      
+      // Check cache first
+      const cacheKey = `opentdb_quizzes_${effectiveCategoryId}`;
+      const cachedQuizzes = localStorage.getItem(cacheKey);
+      const cacheTime = localStorage.getItem(`${cacheKey}_timestamp`);
+      const cacheExpiry = 30 * 60 * 1000; // 30 minutes
+      
+      if (cachedQuizzes && cacheTime && (Date.now() - parseInt(cacheTime)) < cacheExpiry) {
+        try {
+          const parsedQuizzes = JSON.parse(cachedQuizzes);
+          if (parsedQuizzes.length > 0) {
+            console.log(`Using cached quizzes for ${effectiveCategory}: ${parsedQuizzes.length} questions`);
+            setSurveys(parsedQuizzes);
+            return parsedQuizzes;
+          }
+        } catch (parseError) {
+          console.log('Cache corrupted, fetching fresh data');
+          localStorage.removeItem(cacheKey);
+          localStorage.removeItem(`${cacheKey}_timestamp`);
         }
       }
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+
+      // Fetch fresh quizzes from OpenTDB
+      const data = await apiCall(
+        `api.php?amount=10&type=multiple&category=${effectiveCategoryId}`,
+        { method: 'GET' }
+      );
+
+      if (!data.results || data.results.length === 0) {
+        throw new Error('No questions available for this category');
       }
-      const data = await response.json();
-      if (data.response_code === 0) {
-        const metadata = getTierMetadata(cachedCategories);
-        const surveysData = data.results.map((q, index) => ({
-          id: `opentdb-${categoryId}-${index}-${Date.now()}`,
-          title: q.question.replace(/&quot;/g, '"').replace(/&#039;/g, "'"),
-          description: 'Answer this multiple-choice question to earn rewards.',
-          reward: metadata.rewards[categoryId] || `KES 4.00`,
-          type: 'survey',
-          category: normalizeCategoryName(q.category),
-          categoryId: categoryId,
-          difficulty: q.difficulty,
-          correct_answer: q.correct_answer,
-          incorrect_answers: q.incorrect_answers,
+
+      // Process and transform API data
+      const processedQuizzes = data.results.map((question, index) => {
+        // Decode HTML entities
+        const decodedQuestion = decodeHtmlEntities(question.question);
+        const decodedCorrect = decodeHtmlEntities(question.correct_answer);
+        const decodedIncorrect = question.incorrect_answers.map(decodeHtmlEntities);
+        
+        // Shuffle incorrect answers for variety
+        const shuffledIncorrect = shuffleArray(decodedIncorrect);
+        
+        return {
+          id: `quiz-${effectiveCategoryId}-${index}-${Date.now()}`,
+          title: decodedQuestion,
+          description: `Answer this ${question.difficulty} question about ${effectiveDisplayName}`,
+          question: decodedQuestion,
+          correct_answer: decodedCorrect,
+          incorrect_answers: shuffledIncorrect,
+          options: shuffleArray([...shuffledIncorrect, decodedCorrect]), // Shuffle all options
+          reward: metadata.rewards[effectiveCategoryId] || `KES ${(4 + Math.random() * 4).toFixed(2)}`,
+          type: 'quiz',
+          category: effectiveCategory,
+          displayCategory: effectiveDisplayName,
+          categoryId: effectiveCategoryId,
+          difficulty: question.difficulty,
           duration: metadata.duration,
           timestamp: Date.now(),
-        }));
-        setSurveys(surveysData);
-        localStorage.setItem(cacheKey, JSON.stringify(surveysData));
-        console.log(`Surveys fetched for category ID ${categoryId}:`, surveysData.length);
-      } else {
-        throw new Error('OpenTDB API error: Response code ' + data.response_code);
-      }
+          source: 'opentdb',
+          apiData: question // Keep original for reference
+        };
+      });
+
+      // Cache the results
+      localStorage.setItem(cacheKey, JSON.stringify(processedQuizzes));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
+
+      console.log(`✅ Fetched ${processedQuizzes.length} fresh quizzes from OpenTDB`);
+      setSurveys(processedQuizzes);
+      return processedQuizzes;
+
     } catch (error) {
-      toast.error('Failed to fetch surveys. Please try again.');
-      console.error(`Error fetching surveys for category ${category}:`, error);
-    } finally {
-      setIsLoading(false);
+      console.error(`❌ Failed to fetch quizzes for ${effectiveCategory}:`, error);
+      
+      if (error.message.includes('No questions available')) {
+        toast.warning(`${effectiveDisplayName} category is temporarily unavailable. Please try another category.`);
+      } else {
+        toast.error(`Failed to load ${effectiveDisplayName} quizzes. Please try again.`);
+      }
+      
+      // Clear invalid cache
+      const cacheKey = `opentdb_quizzes_${effectiveCategoryId}`;
+      localStorage.removeItem(cacheKey);
+      localStorage.removeItem(`${cacheKey}_timestamp`);
+      
+      throw error;
     }
-  };
+  }, [effectiveCategoryId, effectiveCategory, effectiveDisplayName, apiCall, fetchCategories]);
 
+  // Main data loading effect
   useEffect(() => {
-    console.log('TaskData useEffect triggered with category:', category);
-    setSurveys([]); // Reset surveys
-    setIsLoading(true);
-    fetchCategories().then(() => {
-      fetchUserHistory();
-      fetchSurveys();
-    });
-  }, [category, user]); // Re-run on category or user change
+    console.log('=== TASKDATA INITIALIZATION ===');
+    console.log('Category:', effectiveCategory);
+    console.log('Category ID:', effectiveCategoryId);
+    console.log('Display Name:', effectiveDisplayName);
+    console.log('User:', user ? `${user.email} (authenticated)` : 'Not authenticated');
 
-  if (isLoading) {
-    console.log('Rendering loading state for category:', category);
+    if (!user) {
+      console.log('No user - redirecting to login');
+      toast.error('Please log in to continue.');
+      return;
+    }
+
+    if (!effectiveCategoryId) {
+      console.error('No category ID - cannot load quizzes');
+      toast.error('Invalid category. Please select a category first.');
+      return;
+    }
+
+    const loadQuizzes = async () => {
+      try {
+        setIsLoading(true);
+        setSurveys([]); // Clear previous results
+        
+        console.log('Step 1: Loading user cooldowns...');
+        await fetchUserHistory();
+        
+        console.log('Step 2: Loading quizzes from OpenTDB...');
+        await fetchQuizzesFromAPI();
+        
+        console.log('✅ Quiz loading completed successfully');
+        
+      } catch (error) {
+        console.error('❌ Quiz loading failed:', error);
+        setSurveys([]); // Clear any partial results
+        
+        // Show empty state with retry option
+        if (renderEmpty) {
+          const retryAction = (
+            <button
+              onClick={fetchQuizzesFromAPI}
+              className="underline hover:no-underline"
+            >
+              Try Again
+            </button>
+          );
+          toast.error(
+            `Failed to load ${effectiveDisplayName} quizzes. ${retryAction}`,
+            { 
+              autoClose: false,
+              toastId: `quiz-load-error-${effectiveCategoryId}`
+            }
+          );
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    // Add small delay to prevent flash of empty content
+    const timer = setTimeout(() => {
+      loadQuizzes();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [effectiveCategoryId, user, fetchQuizzesFromAPI, renderEmpty, effectiveDisplayName]);
+
+  // Show API errors
+  useEffect(() => {
+    if (apiError) {
+      toast.error(`API Error: ${apiError}`);
+    }
+  }, [apiError]);
+
+  // Loading state
+  if (isLoading || apiLoading) {
+    console.log('Showing loading state for:', effectiveDisplayName);
     return (
-      <>
-        {Array(3)
-          .fill()
-          .map((_, index) => renderTask({ id: `loading-${index}` }, true))}
-      </>
+      <div className="space-y-4">
+        {Array.from({ length: 3 }, (_, index) => (
+          renderTask(
+            { 
+              id: `loading-${index}`, 
+              title: 'Loading...',
+              isLoading: true,
+              category: effectiveDisplayName 
+            }, 
+            true
+          )
+        ))}
+      </div>
     );
   }
 
-  if (surveys.length === 0 && renderEmpty) {
-    console.log('No surveys available for category:', category);
-    return renderEmpty();
+  // Empty state
+  if (surveys.length === 0 && !isLoading) {
+    console.log('No quizzes available for:', effectiveDisplayName);
+    return renderEmpty ? renderEmpty({
+      categoryName: effectiveDisplayName,
+      categoryId: effectiveCategoryId,
+      retryAction: () => fetchQuizzesFromAPI()
+    }) : null;
   }
 
-  console.log('Rendering surveys:', surveys.length);
-  return surveys.map((survey) =>
-    renderTask(
-      {
-        ...survey,
-        isDisabled: disabledCategories[survey.categoryId],
-        cooldownSeconds: categoryCooldowns[survey.categoryId],
-      },
-      false
-    )
+  // Success state - render quizzes
+  console.log(`Rendering ${surveys.length} quizzes for ${effectiveDisplayName}`);
+  console.log('Quiz sources:', surveys.map(q => q.source).filter(Boolean));
+  
+  return (
+    <div className="space-y-4">
+      {surveys.map((quiz) => 
+        renderTask(
+          {
+            ...quiz,
+            isDisabled: disabledCategories[effectiveCategoryId],
+            cooldownSeconds: categoryCooldowns[effectiveCategoryId],
+          },
+          false
+        )
+      )}
+    </div>
   );
 };
 

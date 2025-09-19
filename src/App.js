@@ -35,10 +35,26 @@ const Home = () => (
 
 const App = () => {
   const location = useLocation();
-  const dashboardRoutes = ['/surveys', '/insights', '/writer', '/wallet', '/tasks/*'];
-  const showBottomNav = dashboardRoutes.some((route) =>
-    route.endsWith('*') ? location.pathname.startsWith(route.slice(0, -2)) : location.pathname === route
-  );
+  
+  // Updated route matching for dashboard routes
+  const dashboardRoutes = [
+    '/surveys', 
+    '/surveys/:category', 
+    '/insights', 
+    '/writer', 
+    '/wallet', 
+    '/tasks/:category'
+  ];
+  
+  const showBottomNav = dashboardRoutes.some((route) => {
+    if (route.includes(':')) {
+      // For parameterized routes, match the pattern
+      const pattern = route.replace(/\/:category$/, '/(.*)');
+      return location.pathname.match(new RegExp(`^${pattern}$`));
+    }
+    return location.pathname === route;
+  });
+  
   const showNavAndFooter = !showBottomNav;
 
   return (
@@ -49,11 +65,33 @@ const App = () => {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<SignUp />} />
+          
+          {/* Surveys routes - FIXED: Added parameterized route */}
           <Route path="/surveys" element={<Surveys />} />
+          <Route path="/surveys/:category" element={<Surveys />} />
+          
           <Route path="/insights" element={<Insights />} />
           <Route path="/writer" element={<Writer />} />
           <Route path="/wallet" element={<Wallet />} />
+          
+          {/* Tasks route */}
           <Route path="/tasks/:category" element={<TaskingPage />} />
+          
+          {/* Catch-all route for 404 */}
+          <Route path="*" element={
+            <div className="min-h-screen flex items-center justify-center bg-secondary-light">
+              <div className="text-center">
+                <h1 className="text-4xl font-bold text-primary-main mb-4">404 - Page Not Found</h1>
+                <p className="text-lg text-secondary-contrast mb-6">The page you're looking for doesn't exist.</p>
+                <a 
+                  href="/" 
+                  className="bg-accent-main text-primary-contrast px-6 py-2 rounded-lg hover:bg-accent-light transition-colors"
+                >
+                  Go Home
+                </a>
+              </div>
+            </div>
+          } />
         </Routes>
       </main>
       {showNavAndFooter && <Footer />}
